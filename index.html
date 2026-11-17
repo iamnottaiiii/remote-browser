@@ -16,7 +16,7 @@
     .then(r => r.json())
     .then(d => {
       const fresh = d.heartbeat && (Date.now() - new Date(d.heartbeat).getTime() < 6 * 60 * 1000);
-      if (d.url && fresh) {
+      if (d.url && fresh && d.state !== 'asleep') {
         document.getElementById('msg').textContent = 'Taking you in...';
         window.location.replace(d.url);
       } else {
