@@ -1,9 +1,9 @@
 {
-  "heartbeat": "2026-11-17T06:26:01.494563+00:00",
+  "heartbeat": "2026-11-17T06:27:54.321715+00:00",
   "started": "",
-  "url": "https://acquisition-information-schema-mean.trycloudflare.com/vnc.html?autoconnect=true&password=bjvfi-live&resize=scale",
+  "url": "https://own-decide-holding-reviewer.trycloudflare.com/vnc.html?autoconnect=true&password=bjvfi-live&resize=scale",
   "state": "live",
-  "ip": "20.64.222.196",
-  "ts": "no exit node on tailnet",
-  "peers": "bjvfi-browser, bjvfi-browser, HPlaptop, bjvfi-browser, bjvfi-browser"
+  "ip": "172.56.66.135",
+  "ts": "exit node 100.90.122.1",
+  "peers": "bjvfi-browser, bjvfi-browser, bjvfi-browser, HPlaptop (exit offered), bjvfi-browser, bjvfi-browser"
 }
