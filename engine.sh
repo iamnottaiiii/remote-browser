@@ -10,7 +10,7 @@ VNC_PASS='bjvfi-live'
 export BROWSER_REPO_DIR="$(pwd)"
 
 sudo apt-get update -qq
-sudo apt-get install -y -qq xvfb x11vnc novnc websockify openbox tint2 rsync xprintidle > /dev/null
+sudo apt-get install -y -qq xvfb x11vnc novnc websockify openbox tint2 rsync > /dev/null
 if ! command -v google-chrome > /dev/null; then
   wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
   sudo apt-get install -y -qq ./google-chrome-stable_current_amd64.deb > /dev/null
@@ -184,31 +184,12 @@ publish
 # Keep the session alive, refreshing the heartbeat so the door page
 # knows the browser is awake. The job itself is capped by the
 # workflow timeout (355 minutes). The profile is saved every
-# fourth cycle, about every 20 minutes. If nobody touches the
-# computer for 30 straight minutes, it saves everything and
-# turns itself off instead of running unused.
-IDLE_LIMIT_MS=$((30 * 60 * 1000))
+# fourth cycle, about every 20 minutes, and once more at the end.
 for i in $(seq 1 64); do
   sleep 300
   publish
   if [ $((i % 4)) -eq 0 ]; then
     save_profile
-  fi
-  IDLE_MS=$(DISPLAY=:99 xprintidle 2>/dev/null || echo 0)
-  if [ "$IDLE_MS" -gt $IDLE_LIMIT_MS ]; then
-    echo 'Idle for over 30 minutes, saving and going to sleep'
-    save_profile
-    python3 -c "
-import json, datetime
-d = json.load(open('live.json'))
-d['state'] = 'asleep'
-d['heartbeat'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-json.dump(d, open('live.json', 'w'), indent=2)
-"
-    git add live.json
-    git commit -m 'browser asleep' > /dev/null || true
-    git push > /dev/null || true
-    exit 0
   fi
 done
 save_profile
