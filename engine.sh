@@ -6,7 +6,7 @@
 VNC_PASS='bjvfi-live'
 
 sudo apt-get update -qq
-sudo apt-get install -y -qq xvfb x11vnc novnc websockify openbox > /dev/null
+sudo apt-get install -y -qq xvfb x11vnc novnc websockify openbox tint2 > /dev/null
 if ! command -v google-chrome > /dev/null; then
   wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
   sudo apt-get install -y -qq ./google-chrome-stable_current_amd64.deb > /dev/null
@@ -17,11 +17,12 @@ chmod +x /tmp/cloudflared
 Xvfb :99 -screen 0 1280x800x24 > /tmp/xvfb.log 2>&1 &
 sleep 2
 DISPLAY=:99 openbox > /tmp/openbox.log 2>&1 &
+DISPLAY=:99 tint2 > /tmp/tint2.log 2>&1 &
 mkdir -p ~/.vnc
 x11vnc -storepasswd "$VNC_PASS" ~/.vnc/passwd > /dev/null 2>&1
 x11vnc -display :99 -rfbport 5900 -rfbauth ~/.vnc/passwd -forever -shared -bg -o /tmp/x11vnc.log
 websockify --web=/usr/share/novnc 6080 localhost:5900 > /tmp/websockify.log 2>&1 &
-DISPLAY=:99 google-chrome --no-sandbox --disable-dev-shm-usage --start-maximized --user-data-dir=$HOME/chrome-profile https://duckduckgo.com > /tmp/chrome.log 2>&1 &
+DISPLAY=:99 google-chrome --no-sandbox --disable-dev-shm-usage --no-first-run --start-maximized --user-data-dir=$HOME/chrome-profile https://duckduckgo.com > /tmp/chrome.log 2>&1 &
 
 /tmp/cloudflared tunnel --url http://localhost:6080 --no-autoupdate > /tmp/tunnel.log 2>&1 &
 URL=''
