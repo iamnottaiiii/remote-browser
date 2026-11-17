@@ -22,6 +22,7 @@ chmod +x /tmp/cloudflared
 # tailnet and sends its traffic out through the home exit node, so
 # sites see the home IP instead of the datacenter's.
 TS_STATUS='no auth key'
+TS_PEERS=''
 if [ -n "$TS_AUTHKEY" ]; then
   curl -fsSL https://tailscale.com/install.sh | sh > /dev/null 2>&1
   sudo tailscaled > /tmp/tailscaled.log 2>&1 &
@@ -60,6 +61,18 @@ for p in (d.get("Peer") or {}).values():
     fi
     echo 'No exit node found on the tailnet, browsing keeps the datacenter IP'
   fi
+  TS_PEERS=$(tailscale status --json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+out = []
+for p in (d.get('Peer') or {}).values():
+    name = (p.get('HostName') or '?').strip()
+    out.append(name + (' (exit offered)' if p.get('ExitNodeOption') else ''))
+print(', '.join(out) if out else 'none')
+" 2>/dev/null)
 fi
 
 # The save script, shared by the auto-save and the manual Save page.
@@ -209,7 +222,7 @@ git config user.name 'browser-bot'
 git config user.email 'browser-bot@users.noreply.github.com'
 
 publish() {
-  TUNNEL_URL="$URL" VNC_PASS="$VNC_PASS" TS_STATUS="$TS_STATUS" python3 -c "
+  TUNNEL_URL="$URL" VNC_PASS="$VNC_PASS" TS_STATUS="$TS_STATUS" TS_PEERS="$TS_PEERS" python3 -c "
 import json, os, datetime
 now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 url = os.environ['TUNNEL_URL'] + '/vnc.html?autoconnect=true&password=' + os.environ['VNC_PASS'] + '&resize=scale'
@@ -222,6 +235,7 @@ d.setdefault('started', now)
 d['heartbeat'] = now
 d['state'] = 'live'
 d['ts'] = os.environ.get('TS_STATUS', '')
+d['peers'] = os.environ.get('TS_PEERS', '')
 try:
     import urllib.request
     d['ip'] = urllib.request.urlopen('https://api.ipify.org', timeout=5).read().decode().strip()
