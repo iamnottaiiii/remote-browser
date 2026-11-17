@@ -6,30 +6,22 @@
 <title>My Browser</title>
 <style>
   body { font-family: monospace; background: #fff; color: #111; padding: 40px 24px; font-size: 20px; }
-  a.btn { display: inline-block; margin-top: 16px; padding: 14px 22px; background: #111; color: #fff; text-decoration: none; }
 </style>
 </head>
 <body>
-<p id="msg">Checking the browser...</p>
+<p>Starting...</p>
 <script>
-  fetch('live.json?t=' + Date.now())
+  fetch('https://raw.githubusercontent.com/iamnottaiiii/remote-browser/main/live.json?t=' + Date.now())
     .then(r => r.json())
     .then(d => {
       const fresh = d.heartbeat && (Date.now() - new Date(d.heartbeat).getTime() < 6 * 60 * 1000);
-      if (d.url && fresh && d.state !== 'asleep') {
-        document.getElementById('msg').textContent = 'Taking you in...';
+      if (d.url && fresh) {
         window.location.replace(d.url);
       } else {
-        document.getElementById('msg').innerHTML =
-          'The browser is asleep right now.<br>' +
-          '<a class="btn" href="https://github.com/iamnottaiiii/remote-browser/actions/workflows/browser.yml">Start it</a>' +
-          '<br><br>On that page tap Run workflow. Give it about two minutes, then open this page again.' +
-          '<br><br>Or just tell Muse: start my browser.';
+        setTimeout(() => window.location.reload(), 15000);
       }
     })
-    .catch(() => {
-      document.getElementById('msg').textContent = 'Could not check the browser state. Try again in a moment.';
-    });
+    .catch(() => setTimeout(() => window.location.reload(), 15000));
 </script>
 </body>
 </html>

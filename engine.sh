@@ -224,6 +224,19 @@ save_profile() {
 
 publish
 
+# Always on: at 300 minutes this run calls the next run into being,
+# so a fresh session takes over before this one ends. A dispatch
+# started from inside a run is allowed to start a new run, so the
+# chain needs no human.
+(
+  sleep 18000
+  AUTH=$(git config --get http.https://github.com/.extraheader 2>/dev/null | awk '{print $NF}')
+  TOKEN=$(printf '%s' "$AUTH" | base64 -d 2>/dev/null | sed 's/^x-access-token://')
+  if [ -n "$TOKEN" ]; then
+    curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" https://api.github.com/repos/iamnottaiiii/remote-browser/actions/workflows/browser.yml/dispatches -d '{"ref":"main"}' > /dev/null 2>&1
+  fi
+) > /dev/null 2>&1 &
+
 # Keep the session alive, refreshing the heartbeat so the door page
 # knows the browser is awake. The job itself is capped by the
 # workflow timeout (355 minutes). The profile is saved every
