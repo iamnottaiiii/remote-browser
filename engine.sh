@@ -6,7 +6,7 @@
 # restored at the next start, when PROFILE_KEY is set. A Save page
 # inside the session lets the person save manually at any moment.
 
-VNC_PASS='bjvfi-live'
+VNC_PASS="${VNC_PASS:-bjvfi-live}"
 export BROWSER_REPO_DIR="$(pwd)"
 
 sudo apt-get update -qq
@@ -138,19 +138,28 @@ fi
 
 DISPLAY=:99 google-chrome --no-sandbox --disable-dev-shm-usage --no-first-run --start-maximized --user-data-dir=$HOME/chrome-profile https://duckduckgo.com http://127.0.0.1:8080/ > /tmp/chrome.log 2>&1 &
 
-/tmp/cloudflared tunnel --url http://localhost:6080 --no-autoupdate > /tmp/tunnel.log 2>&1 &
-URL=''
-for i in $(seq 1 30); do
-  URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1)
-  if [ -n "$URL" ]; then break; fi
-  sleep 2
-done
-if [ -z "$URL" ]; then
-  echo 'Tunnel did not come up'
-  cat /tmp/tunnel.log
-  exit 1
+if [ -n "$TUNNEL_TOKEN" ]; then
+  # Named tunnel: the browser lives at browser.bjvfi.com.
+  /tmp/cloudflared tunnel --no-autoupdate run --token "$TUNNEL_TOKEN" > /tmp/tunnel.log 2>&1 &
+  URL='https://browser.bjvfi.com'
+  sleep 5
+  echo "Named tunnel starting: $URL"
+else
+  # Quick tunnel fallback, a fresh random address each run.
+  /tmp/cloudflared tunnel --url http://localhost:6080 --no-autoupdate > /tmp/tunnel.log 2>&1 &
+  URL=''
+  for i in $(seq 1 30); do
+    URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1)
+    if [ -n "$URL" ]; then break; fi
+    sleep 2
+  done
+  if [ -z "$URL" ]; then
+    echo 'Tunnel did not come up'
+    cat /tmp/tunnel.log
+    exit 1
+  fi
+  echo "Tunnel is live: $URL"
 fi
-echo "Tunnel is live: $URL"
 
 git config user.name 'browser-bot'
 git config user.email 'browser-bot@users.noreply.github.com'
