@@ -18,6 +18,40 @@ fi
 curl -sL -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
 chmod +x /tmp/cloudflared
 
+# Home IP routing: when TS_AUTHKEY is set, this session joins the
+# tailnet and sends its traffic out through the home exit node, so
+# sites see the home IP instead of the datacenter's.
+if [ -n "$TS_AUTHKEY" ]; then
+  curl -fsSL https://tailscale.com/install.sh | sh > /dev/null 2>&1
+  sudo tailscaled > /tmp/tailscaled.log 2>&1 &
+  sleep 3
+  sudo tailscale up --authkey "$TS_AUTHKEY" --hostname bjvfi-browser --accept-dns=false > /tmp/tailscale-up.log 2>&1 || cat /tmp/tailscale-up.log
+  EXIT_IP=''
+  for i in $(seq 1 12); do
+    EXIT_IP=$(tailscale status --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for p in (d.get("Peer") or {}).values():
+    if p.get("ExitNodeOption"):
+        ips = p.get("TailscaleIPs") or []
+        if ips:
+            print(ips[0])
+            break
+' 2>/dev/null)
+    if [ -n "$EXIT_IP" ]; then break; fi
+    sleep 5
+  done
+  if [ -n "$EXIT_IP" ]; then
+    sudo tailscale set --exit-node "$EXIT_IP" || true
+    echo "Home IP routing on, exit node $EXIT_IP"
+  else
+    echo 'No exit node found on the tailnet, browsing keeps the datacenter IP'
+  fi
+fi
+
 # The save script, shared by the auto-save and the manual Save page.
 cat > $HOME/do-save.sh << 'SAVE_EOF'
 #!/usr/bin/env bash
