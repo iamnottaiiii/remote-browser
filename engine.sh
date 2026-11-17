@@ -24,6 +24,8 @@ chmod +x /tmp/cloudflared
 TS_STATUS='no auth key'
 TS_PEERS=''
 if [ -n "$TS_AUTHKEY" ]; then
+  GW=$(ip route show default 2>/dev/null | awk '/default/ {print $3; exit}')
+  DEV=$(ip route show default 2>/dev/null | awk '/default/ {print $5; exit}')
   curl -fsSL https://tailscale.com/install.sh | sh > /dev/null 2>&1
   sudo tailscaled > /tmp/tailscaled.log 2>&1 &
   sleep 3
@@ -53,6 +55,11 @@ for p in (d.get("Peer") or {}).values():
   done
   if [ -n "$EXIT_IP" ]; then
     sudo tailscale set --exit-node "$EXIT_IP" || true
+    if [ -n "$GW" ]; then
+      for NET in 198.41.192.0/24 198.41.200.0/24; do
+        sudo ip route add $NET via $GW dev $DEV table 52 > /dev/null 2>&1 || true
+      done
+    fi
     TS_STATUS="exit node $EXIT_IP"
     echo "Home IP routing on, exit node $EXIT_IP"
   else
@@ -203,7 +210,7 @@ if [ -n "$TUNNEL_TOKEN" ]; then
   echo "Named tunnel starting: $URL"
 else
   # Quick tunnel fallback, a fresh random address each run.
-  /tmp/cloudflared tunnel --url http://localhost:6080 --no-autoupdate > /tmp/tunnel.log 2>&1 &
+  /tmp/cloudflared tunnel --url http://localhost:6080 --no-autoupdate --protocol http2 > /tmp/tunnel.log 2>&1 &
   URL=''
   for i in $(seq 1 30); do
     URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1)
