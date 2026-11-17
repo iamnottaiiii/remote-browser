@@ -158,7 +158,7 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(('127.0.0.1', 8080), Handler).serve_forever()
 PYEOF
 
-Xvfb :99 -screen 0 1920x1080x24 > /tmp/xvfb.log 2>&1 &
+Xvfb :99 -screen 0 1280x800x24 > /tmp/xvfb.log 2>&1 &
 sleep 2
 DISPLAY=:99 openbox > /tmp/openbox.log 2>&1 &
 DISPLAY=:99 tint2 > /tmp/tint2.log 2>&1 &
