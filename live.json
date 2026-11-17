@@ -1,8 +1,9 @@
 {
-  "heartbeat": "2026-11-17T05:59:45.571575+00:00",
+  "heartbeat": "2026-11-17T06:18:02.577397+00:00",
   "started": "",
-  "url": "https://carlos-convention-votes-ripe.trycloudflare.com/vnc.html?autoconnect=true&password=bjvfi-live&resize=scale",
+  "url": "https://ballot-females-committed-joel.trycloudflare.com/vnc.html?autoconnect=true&password=bjvfi-live&resize=scale",
   "state": "live",
-  "ip": "52.250.233.135",
-  "ts": "no exit node on tailnet"
+  "ip": "40.74.231.19",
+  "ts": "no exit node on tailnet",
+  "peers": "bjvfi-browser, HPlaptop, bjvfi-browser, bjvfi-browser"
 }
