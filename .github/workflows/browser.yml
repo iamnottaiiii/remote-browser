@@ -1,0 +1,17 @@
+name: Live Browser
+on:
+  push:
+    paths: [start.txt]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: live-browser
+  cancel-in-progress: true
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash engine.sh
