@@ -211,6 +211,11 @@ d['url'] = url
 d.setdefault('started', now)
 d['heartbeat'] = now
 d['state'] = 'live'
+try:
+    import urllib.request
+    d['ip'] = urllib.request.urlopen('https://api.ipify.org', timeout=5).read().decode().strip()
+except Exception:
+    pass
 json.dump(d, open('live.json', 'w'), indent=2)
 "
   git add live.json
