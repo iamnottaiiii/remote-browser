@@ -15,3 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash engine.sh
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          VNC_PASS: ${{ secrets.VNC_PASS }}
+          PROFILE_KEY: ${{ secrets.PROFILE_KEY }}
