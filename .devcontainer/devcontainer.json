@@ -1,0 +1,1 @@
+{"build":{"dockerfile":"Dockerfile"},"forwardPorts":[6080],"name":"Remote Browser","portsAttributes":{"6080":{"label":"Remote Browser","onAutoForward":"openBrowser"}},"postStartCommand":"bash start-browser.sh","remoteUser":"vscode"}
