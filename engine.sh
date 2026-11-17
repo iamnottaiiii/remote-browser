@@ -21,11 +21,17 @@ chmod +x /tmp/cloudflared
 # Home IP routing: when TS_AUTHKEY is set, this session joins the
 # tailnet and sends its traffic out through the home exit node, so
 # sites see the home IP instead of the datacenter's.
+TS_STATUS='no auth key'
 if [ -n "$TS_AUTHKEY" ]; then
   curl -fsSL https://tailscale.com/install.sh | sh > /dev/null 2>&1
   sudo tailscaled > /tmp/tailscaled.log 2>&1 &
   sleep 3
-  sudo tailscale up --authkey "$TS_AUTHKEY" --hostname bjvfi-browser --accept-dns=false > /tmp/tailscale-up.log 2>&1 || cat /tmp/tailscale-up.log
+  if sudo tailscale up --authkey "$TS_AUTHKEY" --hostname bjvfi-browser --accept-dns=false > /tmp/tailscale-up.log 2>&1; then
+    TS_STATUS='joined, looking for exit node'
+  else
+    TS_STATUS='join failed'
+    cat /tmp/tailscale-up.log
+  fi
   EXIT_IP=''
   for i in $(seq 1 12); do
     EXIT_IP=$(tailscale status --json 2>/dev/null | python3 -c '
@@ -46,8 +52,12 @@ for p in (d.get("Peer") or {}).values():
   done
   if [ -n "$EXIT_IP" ]; then
     sudo tailscale set --exit-node "$EXIT_IP" || true
+    TS_STATUS="exit node $EXIT_IP"
     echo "Home IP routing on, exit node $EXIT_IP"
   else
+    if [ "$TS_STATUS" = 'joined, looking for exit node' ]; then
+      TS_STATUS='no exit node on tailnet'
+    fi
     echo 'No exit node found on the tailnet, browsing keeps the datacenter IP'
   fi
 fi
@@ -148,7 +158,7 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(('127.0.0.1', 8080), Handler).serve_forever()
 PYEOF
 
-Xvfb :99 -screen 0 1280x800x24 > /tmp/xvfb.log 2>&1 &
+Xvfb :99 -screen 0 1920x1080x24 > /tmp/xvfb.log 2>&1 &
 sleep 2
 DISPLAY=:99 openbox > /tmp/openbox.log 2>&1 &
 DISPLAY=:99 tint2 > /tmp/tint2.log 2>&1 &
@@ -199,10 +209,10 @@ git config user.name 'browser-bot'
 git config user.email 'browser-bot@users.noreply.github.com'
 
 publish() {
-  TUNNEL_URL="$URL" VNC_PASS="$VNC_PASS" python3 -c "
+  TUNNEL_URL="$URL" VNC_PASS="$VNC_PASS" TS_STATUS="$TS_STATUS" python3 -c "
 import json, os, datetime
 now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-url = os.environ['TUNNEL_URL'] + '/vnc.html?autoconnect=true&password=' + os.environ['VNC_PASS'] + '&resize=remote'
+url = os.environ['TUNNEL_URL'] + '/vnc.html?autoconnect=true&password=' + os.environ['VNC_PASS'] + '&resize=scale'
 try:
     d = json.load(open('live.json'))
 except Exception:
@@ -211,6 +221,7 @@ d['url'] = url
 d.setdefault('started', now)
 d['heartbeat'] = now
 d['state'] = 'live'
+d['ts'] = os.environ.get('TS_STATUS', '')
 try:
     import urllib.request
     d['ip'] = urllib.request.urlopen('https://api.ipify.org', timeout=5).read().decode().strip()
