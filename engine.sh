@@ -175,7 +175,7 @@ DISPLAY=:99 google-chrome --no-sandbox --disable-dev-shm-usage --no-first-run --
 if [ -n "$TUNNEL_TOKEN" ]; then
   # Named tunnel: the browser lives at browser.bjvfi.com.
   /tmp/cloudflared tunnel --no-autoupdate run --token "$TUNNEL_TOKEN" > /tmp/tunnel.log 2>&1 &
-  URL='https://browser.bjvfi.com'
+  URL='https://desk.bjvfi.com'
   sleep 5
   echo "Named tunnel starting: $URL"
 else
