@@ -1,9 +1,11 @@
 {
-  "heartbeat": "2026-11-18T04:33:29.209543+00:00",
-  "started": "",
-  "url": "https://molecules-offices-duration-focusing.trycloudflare.com/vnc.html?autoconnect=true&password=bjvfi-live&resize=scale",
+  "heartbeat": "2026-11-18T06:32:46.348519+00:00",
+  "started": "2026-11-18T06:32:46.348519+00:00",
+  "url": "https://calendars-preventing-males-wagner.trycloudflare.com/vnc_lite.html?autoconnect=true&password=bjvfi-live&resize=scale",
   "state": "live",
-  "ip": "96.73.246.169",
-  "ts": "exit node 100.83.1.97",
-  "peers": "bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser, DESKTOP-4N2854P (exit offered), bjvfi-browser, bjvfi-browser, HPlaptop (exit offered), bjvfi-browser, bjvfi-browser"
+  "ip": "128.203.199.214",
+  "ts": "datacenter direct",
+  "peers": "",
+  "build": "full-computer",
+  "chain": "pending: self-dispatch fires at 300 minutes"
 }
