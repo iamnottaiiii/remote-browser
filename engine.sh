@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Full computer engine. Runs on a GitHub Actions runner.
-# An XFCE desktop on a virtual screen, streamed fullscreen through a
+# A KDE Plasma desktop on a virtual screen, streamed through a
 # Cloudflare quick tunnel. The public link is written to live.json and
 # committed back to this repo. The Chrome profile AND the desktop
 # state (installed apps, pins, created files, wallpaper, settings)
 # are saved (AES-256 encrypted) into the repo every minute and
-# restored at the next start, when PROFILE_KEY is set.
+# restored at the next start, when PROFILE_KEY is set. Plasma is
+# the desktop: Dolphin supplies the file manager service that web
+# app launching needs, and Plasma's own config carries the
+# wallpaper, the dark panel, and the launcher favorites.
 # Direct datacenter egress: the lab proved the presentation fixes
 # carry the human checks, so no home exit node is used here.
 
@@ -17,11 +20,10 @@ TS_STATUS='datacenter direct'
 TS_PEERS=''
 
 sudo apt-get update -qq
-sudo apt-get install -y -qq xvfb x11vnc novnc websockify xfce4 xfce4-terminal mousepad dbus-x11 imagemagick rsync fonts-liberation fonts-noto-core gvfs > /dev/null
-# Preview theming: a clean modern icon theme and a warm-neutral GTK
-# theme, when the distro offers them. Failure here is not fatal;
-# the xfconf defaults below fall back to stock themes.
-sudo apt-get install -y -qq papirus-icon-theme greybird-gtk-theme > /dev/null 2>&1 || true
+sudo apt-get install -y -qq xvfb x11vnc novnc websockify plasma-desktop dolphin konsole systemsettings xdg-desktop-portal-kde kate dbus-x11 imagemagick rsync fonts-liberation fonts-noto-core gvfs qdbus-qt5 > /dev/null 2>&1 || sudo apt-get install -y -qq xvfb x11vnc novnc websockify plasma-desktop dolphin konsole systemsettings kate dbus-x11 imagemagick rsync fonts-liberation fonts-noto-core gvfs > /dev/null 2>&1 || sudo apt-get install -y -qq xvfb x11vnc novnc websockify plasma-desktop konsole systemsettings dbus-x11 imagemagick rsync fonts-liberation fonts-noto-core gvfs > /dev/null
+# Preview theming: a clean modern icon theme, when the distro
+# offers it. Failure here is not fatal; Breeze icons step in.
+sudo apt-get install -y -qq papirus-icon-theme > /dev/null 2>&1 || true
 if ! command -v google-chrome > /dev/null; then
   wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
   sudo apt-get install -y -qq ./google-chrome-stable_current_amd64.deb > /dev/null
@@ -84,7 +86,7 @@ rsync -a \
 rsync -a $HOME/Desktop/ /tmp/prof-stage/state/Desktop/ 2>/dev/null
 rsync -a $HOME/.local/share/applications/ /tmp/prof-stage/state/applications/ 2>/dev/null
 rsync -a $HOME/.local/share/icons/ /tmp/prof-stage/state/icons/ 2>/dev/null
-rsync -a $HOME/.config/xfce4/ /tmp/prof-stage/state/xfce4/ 2>/dev/null
+rsync -a --exclude='*/Cache/*' --exclude='*/Code Cache/*' $HOME/.config/ /tmp/prof-stage/state/config/ 2>/dev/null
 rsync -a $HOME/Work/ /tmp/prof-stage/state/Work/ 2>/dev/null
 rsync -a $HOME/.store/ /tmp/prof-stage/state/store/ 2>/dev/null
 MANIFEST=$(cd /tmp/prof-stage && find . -type f -o -type l | sort | xargs -r sha256sum 2>/dev/null | sha256sum | awk '{print $1}')
@@ -173,9 +175,10 @@ PYEOF
 # The Store helper: serves the Store page on 127.0.0.1:8090 and does
 # the file work a web page cannot do. Installing writes a launcher
 # that opens the app with Chrome's --app flag, so installed apps open
-# as their own windows with no address bar or tabs. Pins are written
-# into the xfce4-panel configuration, which is regenerated from the
-# saved state. All state lives in ~/.store, inside the saved area.
+# as their own windows with no address bar or tabs. Pins live in
+# the Plasma panel configuration (the icon task manager's
+# launchers in the appletsrc), regenerated from the saved state.
+# All state lives in ~/.store, inside the saved area.
 cat > $HOME/store-helper.py << 'STORE_EOF'
 #!/usr/bin/env python3
 import json
@@ -193,8 +196,12 @@ STATE_FILE = os.path.join(STATE_DIR, 'state.json')
 APPS_DIR = os.path.join(HOME, '.local', 'share', 'applications')
 DESKTOP_DIR = os.path.join(HOME, 'Desktop')
 ICON_DIR = os.path.join(HOME, '.local', 'share', 'icons', 'apps')
-PANEL_XML = os.path.join(HOME, '.config', 'xfce4', 'xfconf',
-                         'xfce-perchannel-xml', 'xfce4-panel.xml')
+APPLETSRC = os.path.join(HOME, '.config',
+                         'plasma-org.kde.plasma.desktop-appletsrc')
+PLASMASHELLRC = os.path.join(HOME, '.config', 'plasmashellrc')
+CURATED = ['google-chrome.desktop', 'files.desktop',
+           'terminal.desktop', 'store.desktop', 'settings.desktop',
+           'work.desktop']
 CHROME_FLAGS = ('--user-data-dir=%s/chrome-profile --lang=en-US '
                 '--force-webrtc-ip-handling-policy=disable_non_proxied_udp '
                 '--disable-blink-features=AutomationControlled' % HOME)
@@ -388,88 +395,106 @@ def remove_launchers(app_id):
             pass
 
 
-def write_panel_config():
-    state = load_state()
+def _panel_groups(state):
     by_id = {a['id']: a for a in state['installed']}
-    pinned = [by_id[i] for i in state['pinned'] if i in by_id]
-    ids = [1]
-    launchers = []
-    nid = 10
-    for app in pinned:
-        ids.append(nid)
-        launchers.append(
-            '    <property name="plugin-%d" type="string" value="launcher">\n'
-            '      <property name="items" type="array">\n'
-            '        <value type="string" value="%s.desktop"/>\n'
-            '      </property>\n'
-            '    </property>' % (nid, app['id']))
-        nid += 1
-    ids += [2, 90, 91]
-    plugin_ids = '\n'.join('          <value type="int" value="%d"/>' % i
-                           for i in ids)
-    xml = ('<?xml version="1.0" encoding="UTF-8"?>\n'
-           '<channel name="xfce4-panel" version="1.0">\n'
-           '  <property name="panels" type="array">\n'
-           '    <value type="int" value="1"/>\n'
-           '    <property name="panel-1" type="empty">\n'
-           '      <property name="position" type="string" value="p=8;x=0;y=0"/>\n'
-           '      <property name="length" type="uint" value="100"/>\n'
-           '      <property name="position-locked" type="bool" value="true"/>\n'
-           '      <property name="icon-size" type="uint" value="30"/>\n'
-           '      <property name="size" type="uint" value="44"/>\n'
-           '      <property name="background-alpha" type="uint" value="88"/>\n'
-           '      <property name="background-style" type="uint" value="1"/>\n'
-           '      <property name="background-color" type="array">\n'
-           '        <value type="uint" value="9500"/>\n'
-           '        <value type="uint" value="9500"/>\n'
-           '        <value type="uint" value="9500"/>\n'
-           '        <value type="uint" value="65535"/>\n'
-           '      </property>\n'
-           '      <property name="plugin-ids" type="array">\n'
-           + plugin_ids + '\n'
-           '      </property>\n'
-           '    </property>\n'
-           '  </property>\n'
-           '  <property name="plugins" type="empty">\n'
-           '    <property name="plugin-1" type="string" value="applicationsmenu">\n'
-           '      <property name="show-button-title" type="bool" value="false"/>\n'
-           '    </property>\n'
-           + ('\n'.join(launchers) + '\n' if launchers else '')
-           + '    <property name="plugin-2" type="string" value="tasklist">\n'
-           '      <property name="grouping" type="uint" value="1"/>\n'
-           '    </property>\n'
-           '    <property name="plugin-90" type="string" value="separator">\n'
-           '      <property name="expand" type="bool" value="true"/>\n'
-           '      <property name="style" type="uint" value="0"/>\n'
-           '    </property>\n'
-           '    <property name="plugin-91" type="string" value="clock">\n'
-           '      <property name="mode" type="uint" value="2"/>\n'
-           '      <property name="digital-format" type="string" value="%l:%M %p"/>\n'
-           '    </property>\n'
-           '  </property>\n'
-           '</channel>\n')
-    os.makedirs(os.path.dirname(PANEL_XML), exist_ok=True)
-    with open(PANEL_XML, 'w') as f:
-        f.write(xml)
+    launcher_ids = list(CURATED)
+    for pid in state['pinned']:
+        if pid in by_id:
+            launcher_ids.append(pid + '.desktop')
+    launchers = ','.join('applications:' + i for i in launcher_ids)
+    return [
+        ('ActionPlugins][0', [
+            'RightButton;NoModifier=org.kde.contextmenu',
+            'wheel:Vertical;NoModifier=org.kde.switchdesktop']),
+        ('ActionPlugins][1', [
+            'RightButton;NoModifier=org.kde.contextmenu']),
+        ('Containments][2', [
+            'activityId=', 'formfactor=2', 'immutability=1',
+            'lastScreen=0', 'location=4', 'plugin=org.kde.panel',
+            'wallpaperplugin=org.kde.image']),
+        ('Containments][2][Applets][3', [
+            'immutability=1', 'plugin=org.kde.plasma.kickoff']),
+        ('Containments][2][Applets][3][Configuration][General', [
+            'favoritesPortedToKAstats=true']),
+        ('Containments][2][Applets][3][Configuration][Shortcuts', [
+            'global=Alt+F1']),
+        ('Containments][2][Applets][3][Shortcuts', [
+            'global=Alt+F1']),
+        ('Containments][2][Applets][4', [
+            'immutability=1', 'plugin=org.kde.plasma.icontasks']),
+        ('Containments][2][Applets][4][Configuration][General', [
+            'launchers=' + launchers]),
+        ('Containments][2][Applets][5', [
+            'immutability=1', 'plugin=org.kde.plasma.digitalclock']),
+        ('Containments][2][General', ['AppletOrder=3;4;5']),
+    ]
+
+
+def _is_ours(group):
+    return (group.startswith('ActionPlugins')
+            or group == 'Containments][2'
+            or group.startswith('Containments][2]['))
+
+
+def write_panel_config():
+    # Regenerate the Plasma panel (containment 2) inside the
+    # appletsrc, preserving every other group the shell wrote
+    # (the desktop containment with the wallpaper, the screen
+    # mapping). The panel: launcher at the left, an icon task
+    # manager whose launchers are the six curated apps plus the
+    # pinned web apps, and the clock at the right. Panel
+    # thickness lives in plasmashellrc, not the appletsrc.
+    state = load_state()
+    kept = []
+    if os.path.exists(APPLETSRC):
+        name = None
+        lines = []
+        with open(APPLETSRC) as f:
+            raw_lines = f.read().splitlines()
+        for line in raw_lines + ['[END]']:
+            if line.startswith('[') and line.endswith(']'):
+                if name is not None and not _is_ours(name):
+                    kept.append((name, lines))
+                name = line[1:-1]
+                lines = []
+            elif name is not None and line.strip():
+                lines.append(line)
+    out = []
+    for name, lines in kept + _panel_groups(state):
+        out.append('[' + name + ']')
+        out.extend(lines)
+        out.append('')
+    os.makedirs(os.path.dirname(APPLETSRC), exist_ok=True)
+    with open(APPLETSRC, 'w') as f:
+        f.write('\n'.join(out))
+    with open(PLASMASHELLRC, 'w') as f:
+        f.write('[PlasmaViews][Panel 2][Defaults]\nthickness=44\n')
 
 
 def restart_panel():
+    # Bounce plasmashell so a pin or unpin lands in the task
+    # manager: stop the shell, regenerate the panel config while
+    # it is down (a running shell overwrites the file on exit),
+    # then start the shell again.
     env = dict(os.environ)
     env.setdefault('DISPLAY', ':99')
+    env.setdefault('LIBGL_ALWAYS_SOFTWARE', '1')
     try:
-        subprocess.run(['xfce4-panel', '-q'], env=env, timeout=10,
+        subprocess.run(['pkill', '-x', 'plasmashell'], timeout=10,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
-    try:
-        subprocess.run(['pkill', '-9', 'xfconfd'], timeout=10,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-    time.sleep(1)
+    for _ in range(20):
+        r = subprocess.run(['pgrep', '-x', 'plasmashell'],
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+        if r.returncode != 0:
+            break
+        time.sleep(0.5)
     write_panel_config()
     try:
-        subprocess.Popen(['xfce4-panel'], env=env, stdout=subprocess.DEVNULL,
+        subprocess.Popen(['plasmashell'], env=env,
+                         stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True)
     except Exception:
         pass
@@ -630,7 +655,7 @@ Xvfb :99 -screen 0 1280x800x24 > /tmp/xvfb.log 2>&1 &
 sleep 2
 
 mkdir -p $HOME/Desktop $HOME/.local/share/applications $HOME/.local/share/icons \
-         $HOME/.config/xfce4 $HOME/Work $HOME/.store $HOME/Templates $HOME/chrome-profile
+         $HOME/.config $HOME/Work $HOME/.store $HOME/Templates $HOME/chrome-profile
 
 # Restore the saved profile and desktop state, if a save exists and
 # the key is set. The save file is AES-256 encrypted; without
@@ -647,7 +672,7 @@ if [ -n "$PROFILE_KEY" ] && [ -f profile.tar.gz.enc ]; then
       [ -d /tmp/restore/state/Desktop ] && rsync -a /tmp/restore/state/Desktop/ $HOME/Desktop/ 2>/dev/null
       [ -d /tmp/restore/state/applications ] && rsync -a /tmp/restore/state/applications/ $HOME/.local/share/applications/ 2>/dev/null
       [ -d /tmp/restore/state/icons ] && rsync -a /tmp/restore/state/icons/ $HOME/.local/share/icons/ 2>/dev/null
-      [ -d /tmp/restore/state/xfce4 ] && rsync -a /tmp/restore/state/xfce4/ $HOME/.config/xfce4/ 2>/dev/null
+      [ -d /tmp/restore/state/config ] && rsync -a /tmp/restore/state/config/ $HOME/.config/ 2>/dev/null
       [ -d /tmp/restore/state/Work ] && rsync -a /tmp/restore/state/Work/ $HOME/Work/ 2>/dev/null
       [ -d /tmp/restore/state/store ] && rsync -a /tmp/restore/state/store/ $HOME/.store/ 2>/dev/null
     else
@@ -683,111 +708,62 @@ if true; then
     done
   }
   seed_app google-chrome.desktop 'Chrome' "google-chrome $CHROME_FLAGS" 'google-chrome' 'Network;WebBrowser;'
-  seed_app files.desktop 'Files' 'thunar' 'system-file-manager' 'System;FileTools;FileManager;'
-  seed_app terminal.desktop 'Terminal' 'xfce4-terminal' 'utilities-terminal' 'System;TerminalEmulator;'
+  seed_app files.desktop 'Files' 'dolphin' 'system-file-manager' 'System;FileTools;FileManager;'
+  seed_app terminal.desktop 'Terminal' 'konsole' 'utilities-terminal' 'System;TerminalEmulator;'
   seed_app store.desktop 'Store' "google-chrome $CHROME_FLAGS --app=http://127.0.0.1:8090/" 'system-software-install' 'System;Settings;'
-  seed_app settings.desktop 'Settings' 'xfce4-settings-manager' 'preferences-system' 'Settings;'
-  seed_app work.desktop 'Work' "thunar $HOME/Work" 'folder' 'System;FileTools;FileManager;'
+  seed_app settings.desktop 'Settings' 'systemsettings' 'preferences-system' 'Settings;'
+  seed_app work.desktop 'Work' "dolphin $HOME/Work" 'folder' 'System;FileTools;FileManager;'
   [ -f $HOME/.store/state.json ] || printf '{"installed": [], "pinned": []}' > $HOME/.store/state.json
 fi
 [ -L $HOME/Desktop/Work ] && rm -f $HOME/Desktop/Work
 [ -f "$HOME/Templates/Text Document.txt" ] || : > "$HOME/Templates/Text Document.txt"
 
-# Curated app menu: the panel menu button and the desktop
-# right-click menu both read this one file. It lists ONLY the six
-# curated apps plus a Web Apps section fed by the Store's category,
-# so no system or developer clutter ever reaches the home screen.
-# System tools stay reachable through the Settings entry alone.
-mkdir -p $HOME/.config/menus $HOME/.local/share/desktop-directories
-cat > $HOME/.config/menus/xfce-applications.menu << 'MENU_EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN" "http://www.freedesktop.org/standards/menu-spec/1.0/menu.dtd">
-<Menu>
-  <Name>Xfce</Name>
-  <DefaultAppDirs/>
-  <DefaultDirectoryDirs/>
-  <DefaultMergeDirs/>
-  <Include>
-    <Filename>google-chrome.desktop</Filename>
-    <Filename>files.desktop</Filename>
-    <Filename>terminal.desktop</Filename>
-    <Filename>store.desktop</Filename>
-    <Filename>settings.desktop</Filename>
-    <Filename>work.desktop</Filename>
-  </Include>
-  <Menu>
-    <Name>Web Apps</Name>
-    <Directory>webapps.directory</Directory>
-    <Include>
-      <Category>WebApp</Category>
-    </Include>
-  </Menu>
-  <Layout>
-    <Filename>google-chrome.desktop</Filename>
-    <Filename>files.desktop</Filename>
-    <Filename>terminal.desktop</Filename>
-    <Filename>store.desktop</Filename>
-    <Filename>settings.desktop</Filename>
-    <Filename>work.desktop</Filename>
-    <Separator/>
-    <Menuname>Web Apps</Menuname>
-  </Layout>
-</Menu>
-MENU_EOF
-printf '[Desktop Entry]\nType=Directory\nName=Web Apps\nIcon=web-browser\n' > $HOME/.local/share/desktop-directories/webapps.directory
+# The Plasma look is written as config BEFORE the session first
+# starts, so the first boot already wears it: kdeglobals sets the
+# Breeze Dark look (dark charcoal panel and windows) and the
+# Papirus-Dark icon theme; kwinrc turns compositing on (software
+# GL under the virtual screen, so the panel blur can work, with a
+# plain fallback if it cannot); mimeapps makes Dolphin the default
+# file manager. Dolphin running inside the Plasma session is also
+# what supplies the file manager service, the piece whose absence
+# made installed web apps fail to launch on the old desktop.
+mkdir -p $HOME/.config
+cat > $HOME/.config/kdeglobals << 'KDEG_EOF'
+[Icons]
+Theme=Papirus-Dark
+[KDE]
+LookAndFeelPackage=org.kde.breezedark.desktop
+KDEG_EOF
+cat > $HOME/.config/kwinrc << 'KWIN_EOF'
+[Compositing]
+Enabled=true
+KWIN_EOF
+cat > $HOME/.config/mimeapps.list << 'MIME_EOF'
+[Default Applications]
+inode/directory=org.kde.dolphin.desktop
+x-scheme-handler/file=org.kde.dolphin.desktop
+MIME_EOF
 
-# Look, written as xfconf config BEFORE XFCE first starts, so the
-# first boot already wears it: warm Greybird GTK theme, Papirus-Dark
-# icons (light symbols for the dark panel), a dark Greybird window
-# frame with compositing on (the panel's slight transparency needs
-# it), and a desktop that shows only our curated file icons (no
-# Home, File System, Trash, or removable-drive icons).
-XFCONF_DIR=$HOME/.config/xfce4/xfconf/xfce-perchannel-xml
-mkdir -p $XFCONF_DIR
-cat > $XFCONF_DIR/xsettings.xml << 'XSET_EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xsettings" version="1.0">
-  <property name="Gtk" type="empty">
-    <property name="ThemeName" type="string" value="Greybird"/>
-    <property name="IconThemeName" type="string" value="Papirus-Dark"/>
-    <property name="FontName" type="string" value="Liberation Sans 11"/>
-  </property>
-</channel>
-XSET_EOF
-cat > $XFCONF_DIR/xfwm4.xml << 'XFWM_EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfwm4" version="1.0">
-  <property name="general" type="empty">
-    <property name="theme" type="string" value="Greybird"/>
-    <property name="use_compositing" type="bool" value="true"/>
-  </property>
-</channel>
-XFWM_EOF
-cat > $XFCONF_DIR/xfce4-desktop.xml << 'XDESK_EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfce4-desktop" version="1.0">
-  <property name="desktop-icons" type="empty">
-    <property name="style" type="int" value="2"/>
-    <property name="font-size" type="uint" value="11"/>
-    <property name="file-icons" type="empty">
-      <property name="show-home" type="bool" value="false"/>
-      <property name="show-filesystem" type="bool" value="false"/>
-      <property name="show-trash" type="bool" value="false"/>
-      <property name="show-removable" type="bool" value="false"/>
-    </property>
-  </property>
-  <property name="desktop-menu" type="empty">
-    <property name="show" type="bool" value="true"/>
-  </property>
-</channel>
-XDESK_EOF
+# Hide the system clutter: NoDisplay override entries for the
+# noisy utilities a stock Plasma install ships, and for the stock
+# Dolphin, Konsole, and System Settings entries, which the curated
+# six replace. Menus and search then show his apps only; the
+# system tools stay reachable through the Settings entry.
+for sysapp in org.kde.dolphin.desktop org.kde.konsole.desktop org.kde.systemsettings.desktop org.kde.plasma-welcome.desktop org.kde.kfind.desktop org.kde.kdiskfree.desktop org.kde.kruler.desktop org.kde.kcharselect.desktop org.kde.kcolorchooser.desktop org.kde.kamera.desktop org.kde.spectacle.desktop org.kde.kleopatra.desktop org.kde.kmag.desktop org.kde.kmouth.desktop org.kde.kate.desktop htop.desktop vim.desktop; do
+  if [ -f "/usr/share/applications/$sysapp" ]; then
+    printf '[Desktop Entry]\nType=Application\nName=%s\nNoDisplay=true\n' "$sysapp" > "$HOME/.local/share/applications/$sysapp"
+  fi
+done
 
-# The panel configuration is generated from the saved state before
-# the panel starts, so pinned apps are in the taskbar from boot.
+# The panel and desktop configuration (the appletsrc) is
+# generated from the saved state before Plasma starts, so the
+# launcher favorites, the pinned apps in the task manager, and
+# the wallpaper are in place from the first second.
 python3 $HOME/store-helper.py --regen-panel > /dev/null 2>&1 || true
 
-# Session bus, then the desktop itself: settings daemon, window
-# manager, desktop, panel.
+# Session bus, then the Plasma session itself: KWin, the desktop,
+# and the panel all come up as one real Plasma session, so KDE
+# services (the file manager service included) register properly.
 eval "$(dbus-launch --sh-syntax)" > /dev/null 2>&1 || true
 export DISPLAY=:99
 # Launchers must LAUNCH: an untrusted .desktop file opens in a text
@@ -800,25 +776,37 @@ for f in $HOME/Desktop/*.desktop $HOME/.local/share/applications/*.desktop; do
   chmod +x "$f"
   gio set "$f" metadata::trusted true > /dev/null 2>&1 || true
 done
-xfsettingsd > /tmp/xfsettingsd.log 2>&1 &
-xfwm4 > /tmp/xfwm4.log 2>&1 &
-xfdesktop > /tmp/xfdesktop.log 2>&1 &
-xfce4-panel > /tmp/xfce4-panel.log 2>&1 &
-sleep 3
+# Software rendering: the virtual screen has no GPU, so Mesa
+# runs in software (llvmpipe) and KWin compositing works on top.
+# If compositing still cannot start, KWin falls back on its own
+# and the desktop stays usable; nothing hard-depends on it.
+export LIBGL_ALWAYS_SOFTWARE=1
+startplasma-x11 > /tmp/plasma.log 2>&1 &
+sleep 5
 
-# Point the desktop at the wallpaper and at file icons, using
-# whatever monitor name this screen reports.
-for i in $(seq 1 10); do
-  PROPS=$(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep 'last-image$' || true)
-  [ -n "$PROPS" ] && break
-  sleep 2
-done
-for p in $PROPS; do
-  xfconf-query -c xfce4-desktop -p "$p" -s "$HOME/wallpaper.png" 2>/dev/null || true
-  STYLE_PROP="${p%last-image}image-style"
-  xfconf-query -c xfce4-desktop -p "$STYLE_PROP" -n -t int -s 5 2>/dev/null || true
-done
-xfconf-query -c xfce4-desktop -p /desktop-icons/style -n -t int -s 2 2>/dev/null || true
+# Wallpaper, applied through Plasma's own scripting channel once
+# the shell answers. Writing the desktop containment's config by
+# hand does not survive: the shell ties the desktop to an
+# activity it creates itself and discards foreign containments
+# (verified against a local Plasma 5.27 session). Through the
+# script channel the setting lands in the appletsrc under the
+# real containment, applies on screen, and is part of the saved
+# state from then on.
+QDBUS=$(command -v qdbus || command -v qdbus-qt5 || true)
+if [ -n "$QDBUS" ]; then
+  for i in $(seq 1 10); do
+    "$QDBUS" org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
+var ds = desktops();
+for (var i = 0; i < ds.length; i++) {
+  var d = ds[i];
+  d.wallpaperPlugin = 'org.kde.image';
+  d.currentConfigGroup = ['Wallpaper', 'org.kde.image', 'General'];
+  d.writeConfig('Image', 'file://$HOME/wallpaper.png');
+  d.writeConfig('FillMode', 2);
+}" > /dev/null 2>&1 && break
+    sleep 4
+  done
+fi
 
 mkdir -p ~/.vnc
 x11vnc -storepasswd "$VNC_PASS" ~/.vnc/passwd > /dev/null 2>&1
