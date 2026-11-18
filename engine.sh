@@ -17,7 +17,11 @@ TS_STATUS='datacenter direct'
 TS_PEERS=''
 
 sudo apt-get update -qq
-sudo apt-get install -y -qq xvfb x11vnc novnc websockify xfce4 xfce4-terminal mousepad dbus-x11 imagemagick rsync fonts-liberation fonts-noto-core > /dev/null
+sudo apt-get install -y -qq xvfb x11vnc novnc websockify xfce4 xfce4-terminal mousepad dbus-x11 imagemagick rsync fonts-liberation fonts-noto-core gvfs > /dev/null
+# Preview theming: a clean modern icon theme and a warm-neutral GTK
+# theme, when the distro offers them. Failure here is not fatal;
+# the xfconf defaults below fall back to stock themes.
+sudo apt-get install -y -qq papirus-icon-theme greybird-gtk-theme > /dev/null 2>&1 || true
 if ! command -v google-chrome > /dev/null; then
   wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
   sudo apt-get install -y -qq ./google-chrome-stable_current_amd64.deb > /dev/null
@@ -227,11 +231,13 @@ PAGE = """<!DOCTYPE html>
 <html><head><meta charset='utf-8'><title>Store</title>
 <style>
 body{font-family:Georgia,serif;background:#f3ead8;color:#2b2620;margin:0;padding:28px}
-h1{font-size:26px;font-weight:normal;margin:0 0 4px}
+h1{font-size:28px;font-weight:normal;margin:0 0 4px}
 p.sub{color:#6d6152;margin:0 0 20px}
-.bar{background:#fffdf7;border:1px solid #d8cbae;padding:16px;margin-bottom:22px}
+.bar{background:#fffdf7;border:1px solid #d8cbae;padding:16px;margin-bottom:14px}
 .bar input[type=text]{font-size:16px;padding:9px;width:62%;border:1px solid #c9b995}
 .bar input[type=text].name{width:22%}
+.search{margin-bottom:18px}
+.search input{font-size:16px;padding:9px;width:98%;border:1px solid #c9b995;background:#fffdf7}
 button{font-size:15px;padding:9px 16px;background:#2e2a26;color:#f3ead8;border:0;cursor:pointer}
 button.plain{background:#e7dcc4;color:#2b2620;border:1px solid #c9b995}
 .app{background:#fffdf7;border:1px solid #d8cbae;padding:14px 16px;margin-bottom:10px;
@@ -251,6 +257,7 @@ display:flex;align-items:center;gap:14px}
 <button onclick='installLink()'>Install</button>
 <p id='msg'></p>
 </div>
+<div class='search'><input type='text' id='q' placeholder='Search the store' oninput='filter()'></div>
 <div id='list'></div>
 <script>
 function api(path, data){
@@ -266,6 +273,13 @@ function installLink(){
     document.getElementById('link').value='';document.getElementById('linkname').value='';
     msg('Installed.');render(s)});
 }
+function filter(){
+  var q=document.getElementById('q').value.toLowerCase();
+  var rows=document.querySelectorAll('#list .app');
+  rows.forEach(function(r){
+    r.style.display = r.getAttribute('data-name').indexOf(q)>=0 ? '' : 'none';
+  });
+}
 function render(s){
   var byId={}; s.installed.forEach(function(a){byId[a.id]=a});
   var html='';
@@ -274,16 +288,18 @@ function render(s){
     if(!s.catalog.some(function(c){return c.id===a.id})) html+=row(a, a, s.pinned.indexOf(a.id)>=0);
   });
   document.getElementById('list').innerHTML=html;
+  filter();
 }
 function row(c, inst, pinned){
   var icon='/icon/'+(inst?inst.id:c.id);
-  var h="<div class='app'><img src='"+icon+"' alt=''><div class='grow'><div class='nm'>"+
+  var h="<div class='app' data-name='"+(c.name+' '+(c.desc||'')).toLowerCase()+"'><img src='"+icon+"' alt=''><div class='grow'><div class='nm'>"+
     c.name+"</div><div class='ds'>"+(c.desc||c.url)+"</div></div>";
   if(inst){
     h+="<span class='tag'>installed</span>";
-    h+=" <button class='plain' onclick=\"act('/api/uninstall','"+c.id+"')\">Remove</button>";
+    h+=" <button onclick=\"act('/api/open','"+c.id+"')\">Open</button>";
     if(pinned) h+=" <button class='plain' onclick=\"act('/api/unpin','"+c.id+"')\">Unpin</button>";
     else h+=" <button onclick=\"act('/api/pin','"+c.id+"')\">Pin to taskbar</button>";
+    h+=" <button class='plain' onclick=\"act('/api/uninstall','"+c.id+"')\">Remove</button>";
   } else {
     h+=" <button onclick=\"act('/api/install','"+c.id+"')\">Install</button>";
   }
@@ -346,6 +362,22 @@ def write_launchers(entry):
         with open(p, 'w') as f:
             f.write(body)
         os.chmod(p, 0o755)
+        trust_launcher(p)
+
+
+def trust_launcher(path):
+    # An untrusted .desktop file opens in a text editor showing its
+    # contents instead of launching. Marking it trusted (the gio
+    # metadata XFCE checks) plus the executable bit makes a click
+    # launch the app.
+    env = dict(os.environ)
+    env.setdefault('DISPLAY', ':99')
+    try:
+        subprocess.run(['gio', 'set', path, 'metadata::trusted', 'true'],
+                       env=env, timeout=10, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
 
 def remove_launchers(app_id):
@@ -383,8 +415,9 @@ def write_panel_config():
            '      <property name="position" type="string" value="p=8;x=0;y=0"/>\n'
            '      <property name="length" type="uint" value="100"/>\n'
            '      <property name="position-locked" type="bool" value="true"/>\n'
-           '      <property name="icon-size" type="uint" value="28"/>\n'
-           '      <property name="size" type="uint" value="40"/>\n'
+           '      <property name="icon-size" type="uint" value="30"/>\n'
+           '      <property name="size" type="uint" value="44"/>\n'
+           '      <property name="background-alpha" type="uint" value="88"/>\n'
            '      <property name="background-style" type="uint" value="1"/>\n'
            '      <property name="background-color" type="array">\n'
            '        <value type="uint" value="9500"/>\n'
@@ -538,6 +571,22 @@ class Handler(BaseHTTPRequestHandler):
             out = do_install(data)
             self._json(out if out is not None else public_state(), 200 if out else 400)
             return
+        if self.path == '/api/open':
+            entry = next((a for a in state['installed']
+                          if a['id'] == app_id), None)
+            if entry:
+                env = dict(os.environ)
+                env.setdefault('DISPLAY', ':99')
+                try:
+                    subprocess.Popen(
+                        ['google-chrome'] + CHROME_FLAGS.split()
+                        + ['--app=' + entry['url']],
+                        env=env, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, start_new_session=True)
+                except Exception:
+                    pass
+            self._json(public_state(state))
+            return
         if self.path == '/api/uninstall':
             state['installed'] = [a for a in state['installed'] if a['id'] != app_id]
             was_pinned = app_id in state['pinned']
@@ -620,9 +669,11 @@ fi
 
 CHROME_FLAGS="--user-data-dir=$HOME/chrome-profile --lang=en-US --force-webrtc-ip-handling-policy=disable_non_proxied_udp --disable-blink-features=AutomationControlled"
 
-# First boot only: seed the desktop with the starter apps. After
-# that, whatever the saved state holds is what the desktop shows.
-if [ "$RESTORED" = '0' ]; then
+# Seed the desktop with the curated starter apps. This runs on
+# every boot and is idempotent: the six system launchers always
+# exist and are always the versions written here, whatever an older
+# saved state carried in.
+if true; then
   seed_app() {
     local file="$1" name="$2" exec_line="$3" icon="$4" cats="$5"
     for d in $HOME/.local/share/applications $HOME/Desktop; do
@@ -636,10 +687,100 @@ if [ "$RESTORED" = '0' ]; then
   seed_app terminal.desktop 'Terminal' 'xfce4-terminal' 'utilities-terminal' 'System;TerminalEmulator;'
   seed_app store.desktop 'Store' "google-chrome $CHROME_FLAGS --app=http://127.0.0.1:8090/" 'system-software-install' 'System;Settings;'
   seed_app settings.desktop 'Settings' 'xfce4-settings-manager' 'preferences-system' 'Settings;'
-  printf '{"installed": [], "pinned": []}' > $HOME/.store/state.json
+  seed_app work.desktop 'Work' "thunar $HOME/Work" 'folder' 'System;FileTools;FileManager;'
+  [ -f $HOME/.store/state.json ] || printf '{"installed": [], "pinned": []}' > $HOME/.store/state.json
 fi
-ln -sfn $HOME/Work $HOME/Desktop/Work 2>/dev/null || true
+[ -L $HOME/Desktop/Work ] && rm -f $HOME/Desktop/Work
 [ -f "$HOME/Templates/Text Document.txt" ] || : > "$HOME/Templates/Text Document.txt"
+
+# Curated app menu: the panel menu button and the desktop
+# right-click menu both read this one file. It lists ONLY the six
+# curated apps plus a Web Apps section fed by the Store's category,
+# so no system or developer clutter ever reaches the home screen.
+# System tools stay reachable through the Settings entry alone.
+mkdir -p $HOME/.config/menus $HOME/.local/share/desktop-directories
+cat > $HOME/.config/menus/xfce-applications.menu << 'MENU_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN" "http://www.freedesktop.org/standards/menu-spec/1.0/menu.dtd">
+<Menu>
+  <Name>Xfce</Name>
+  <DefaultAppDirs/>
+  <DefaultDirectoryDirs/>
+  <DefaultMergeDirs/>
+  <Include>
+    <Filename>google-chrome.desktop</Filename>
+    <Filename>files.desktop</Filename>
+    <Filename>terminal.desktop</Filename>
+    <Filename>store.desktop</Filename>
+    <Filename>settings.desktop</Filename>
+    <Filename>work.desktop</Filename>
+  </Include>
+  <Menu>
+    <Name>Web Apps</Name>
+    <Directory>webapps.directory</Directory>
+    <Include>
+      <Category>WebApp</Category>
+    </Include>
+  </Menu>
+  <Layout>
+    <Filename>google-chrome.desktop</Filename>
+    <Filename>files.desktop</Filename>
+    <Filename>terminal.desktop</Filename>
+    <Filename>store.desktop</Filename>
+    <Filename>settings.desktop</Filename>
+    <Filename>work.desktop</Filename>
+    <Separator/>
+    <Menuname>Web Apps</Menuname>
+  </Layout>
+</Menu>
+MENU_EOF
+printf '[Desktop Entry]\nType=Directory\nName=Web Apps\nIcon=web-browser\n' > $HOME/.local/share/desktop-directories/webapps.directory
+
+# Look, written as xfconf config BEFORE XFCE first starts, so the
+# first boot already wears it: warm Greybird GTK theme, Papirus-Dark
+# icons (light symbols for the dark panel), a dark Greybird window
+# frame with compositing on (the panel's slight transparency needs
+# it), and a desktop that shows only our curated file icons (no
+# Home, File System, Trash, or removable-drive icons).
+XFCONF_DIR=$HOME/.config/xfce4/xfconf/xfce-perchannel-xml
+mkdir -p $XFCONF_DIR
+cat > $XFCONF_DIR/xsettings.xml << 'XSET_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Gtk" type="empty">
+    <property name="ThemeName" type="string" value="Greybird"/>
+    <property name="IconThemeName" type="string" value="Papirus-Dark"/>
+    <property name="FontName" type="string" value="Liberation Sans 11"/>
+  </property>
+</channel>
+XSET_EOF
+cat > $XFCONF_DIR/xfwm4.xml << 'XFWM_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="theme" type="string" value="Greybird"/>
+    <property name="use_compositing" type="bool" value="true"/>
+  </property>
+</channel>
+XFWM_EOF
+cat > $XFCONF_DIR/xfce4-desktop.xml << 'XDESK_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-desktop" version="1.0">
+  <property name="desktop-icons" type="empty">
+    <property name="style" type="int" value="2"/>
+    <property name="font-size" type="uint" value="11"/>
+    <property name="file-icons" type="empty">
+      <property name="show-home" type="bool" value="false"/>
+      <property name="show-filesystem" type="bool" value="false"/>
+      <property name="show-trash" type="bool" value="false"/>
+      <property name="show-removable" type="bool" value="false"/>
+    </property>
+  </property>
+  <property name="desktop-menu" type="empty">
+    <property name="show" type="bool" value="true"/>
+  </property>
+</channel>
+XDESK_EOF
 
 # The panel configuration is generated from the saved state before
 # the panel starts, so pinned apps are in the taskbar from boot.
@@ -649,6 +790,16 @@ python3 $HOME/store-helper.py --regen-panel > /dev/null 2>&1 || true
 # manager, desktop, panel.
 eval "$(dbus-launch --sh-syntax)" > /dev/null 2>&1 || true
 export DISPLAY=:99
+# Launchers must LAUNCH: an untrusted .desktop file opens in a text
+# editor showing its code instead of the app. Every launcher on the
+# desktop and in the applications dir gets the executable bit and
+# the trusted flag XFCE checks, on every boot (a restore brings the
+# files back without their trust metadata).
+for f in $HOME/Desktop/*.desktop $HOME/.local/share/applications/*.desktop; do
+  [ -f "$f" ] || continue
+  chmod +x "$f"
+  gio set "$f" metadata::trusted true > /dev/null 2>&1 || true
+done
 xfsettingsd > /tmp/xfsettingsd.log 2>&1 &
 xfwm4 > /tmp/xfwm4.log 2>&1 &
 xfdesktop > /tmp/xfdesktop.log 2>&1 &
@@ -707,7 +858,7 @@ publish() {
     TUNNEL_URL="$URL" VNC_PASS="$VNC_PASS" TS_STATUS="$TS_STATUS" TS_PEERS="$TS_PEERS" CHAIN_FILE="$CHAIN_FILE" python3 -c "
 import json, os, datetime
 now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-url = os.environ['TUNNEL_URL'] + '/vnc_lite.html?autoconnect=true&password=' + os.environ['VNC_PASS'] + '&resize=scale'
+url = os.environ['TUNNEL_URL'] + '/vnc.html?autoconnect=true&password=' + os.environ['VNC_PASS'] + '&resize=scale'
 try:
     d = json.load(open('live.json'))
 except Exception:
