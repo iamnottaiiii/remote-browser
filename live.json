@@ -1,11 +1,11 @@
 {
-  "heartbeat": "2026-11-18T18:12:33.504129+00:00",
+  "heartbeat": "2026-11-18T18:20:59.302387+00:00",
   "started": "2026-11-18T06:32:46.348519+00:00",
-  "url": "https://brochure-philadelphia-prague-rosa.trycloudflare.com/vnc.html?autoconnect=true&password=bjvfi-live&resize=scale",
+  "url": "https://reads-rendered-practitioners-tracking.trycloudflare.com/vnc.html?autoconnect=true&password=bjvfi-live&resize=scale",
   "state": "live",
-  "ip": "172.200.174.114",
-  "ts": "datacenter direct",
-  "peers": "",
+  "ip": "96.73.246.169",
+  "ts": "exit node 100.83.1.97",
+  "peers": "bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser, DESKTOP-4N2854P (exit offered), bjvfi-browser, bjvfi-browser, HPlaptop (exit offered), bjvfi-browser, bjvfi-browser, bjvfi-browser",
   "build": "full-computer",
   "chain": "pending: self-dispatch fires at 300 minutes"
 }
