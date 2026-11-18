@@ -9,8 +9,11 @@
 # the desktop: Dolphin supplies the file manager service that web
 # app launching needs, and Plasma's own config carries the
 # wallpaper, the dark panel, and the launcher favorites.
-# Direct datacenter egress: the lab proved the presentation fixes
-# carry the human checks, so no home exit node is used here.
+# Home IP routing: when TS_AUTHKEY is set, the session joins the
+# tailnet and egresses through the home exit node (the golden
+# build's routing, restored because TextNow flags datacenter IPs
+# as VPN traffic); when no exit node is offered it falls back to
+# direct datacenter egress.
 
 VNC_PASS="${VNC_PASS:-bjvfi-live}"
 export BROWSER_REPO_DIR="$(pwd)"
@@ -30,6 +33,70 @@ if ! command -v google-chrome > /dev/null; then
 fi
 curl -sL -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
 chmod +x /tmp/cloudflared
+
+# Home IP routing: when TS_AUTHKEY is set, this session joins the
+# tailnet and sends its traffic out through the home exit node, so
+# sites see the home IP instead of the datacenter's. This is the
+# golden build's block, ported unchanged apart from the status
+# wording: TS_STATUS keeps the Plasma build's 'datacenter direct'
+# whenever traffic is not routed home. Cloudflare's edge ranges
+# stay on the direct route (table 52) so the tunnel itself, which
+# talks to those edges, stays stable.
+if [ -n "$TS_AUTHKEY" ]; then
+  GW=$(ip route show default 2>/dev/null | awk '/default/ {print $3; exit}')
+  DEV=$(ip route show default 2>/dev/null | awk '/default/ {print $5; exit}')
+  curl -fsSL https://tailscale.com/install.sh | sh > /dev/null 2>&1
+  sudo tailscaled > /tmp/tailscaled.log 2>&1 &
+  sleep 3
+  if sudo tailscale up --authkey "$TS_AUTHKEY" --hostname bjvfi-browser --accept-dns=false > /tmp/tailscale-up.log 2>&1; then
+    echo 'Joined the tailnet, looking for an exit node'
+  else
+    echo 'Tailnet join failed, browsing keeps the datacenter IP'
+    cat /tmp/tailscale-up.log
+  fi
+  EXIT_IP=''
+  for i in $(seq 1 12); do
+    EXIT_IP=$(tailscale status --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for p in (d.get("Peer") or {}).values():
+    if p.get("ExitNodeOption"):
+        ips = p.get("TailscaleIPs") or []
+        if ips:
+            print(ips[0])
+            break
+' 2>/dev/null)
+    if [ -n "$EXIT_IP" ]; then break; fi
+    sleep 5
+  done
+  if [ -n "$EXIT_IP" ]; then
+    sudo tailscale set --exit-node "$EXIT_IP" || true
+    if [ -n "$GW" ]; then
+      for NET in 198.41.192.0/24 198.41.200.0/24; do
+        sudo ip route add $NET via $GW dev $DEV table 52 > /dev/null 2>&1 || true
+      done
+    fi
+    TS_STATUS="exit node $EXIT_IP"
+    echo "Home IP routing on, exit node $EXIT_IP"
+  else
+    echo 'No exit node found on the tailnet, browsing keeps the datacenter IP'
+  fi
+  TS_PEERS=$(tailscale status --json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+out = []
+for p in (d.get('Peer') or {}).values():
+    name = (p.get('HostName') or '?').strip()
+    out.append(name + (' (exit offered)' if p.get('ExitNodeOption') else ''))
+print(', '.join(out) if out else 'none')
+" 2>/dev/null)
+fi
 
 git config user.name 'browser-bot'
 git config user.email 'browser-bot@users.noreply.github.com'
