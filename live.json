@@ -1,11 +1,11 @@
 {
-  "heartbeat": "2026-11-18T12:36:00.926529+00:00",
+  "heartbeat": "2026-11-18T14:21:05.421650+00:00",
   "started": "2026-11-18T06:32:46.348519+00:00",
-  "url": "https://bryant-calvin-essentials-executive.trycloudflare.com/vnc.html?autoconnect=true&password=bjvfi-live&resize=scale",
+  "url": "https://brochure-philadelphia-prague-rosa.trycloudflare.com/vnc.html?autoconnect=true&password=bjvfi-live&resize=scale",
   "state": "live",
-  "ip": "9.169.198.201",
+  "ip": "172.200.174.114",
   "ts": "datacenter direct",
   "peers": "",
   "build": "full-computer",
-  "chain": "dispatch to iamnottaiiii/remote-browser at 2026-11-18T12:14:15Z UTC, HTTP 403"
+  "chain": "pending: self-dispatch fires at 300 minutes"
 }
