@@ -5,3 +5,6 @@ Home IP routing on, exit node 100.83.1.97
 [boot 15:01:25Z] routing settled: exit node 100.83.1.97
 [boot 15:01:34Z] tunnel attempt 1
 Tunnel is live: https://lawsuit-mba-goal-tries.trycloudflare.com
+[boot 15:01:43Z] first publish done
+[boot 15:01:46Z] restore: verifying the saved archive before touching the live home
+Saved profile and desktop restored
