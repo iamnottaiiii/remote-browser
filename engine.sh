@@ -14,6 +14,12 @@
 # build's routing, restored because TextNow flags datacenter IPs
 # as VPN traffic); when no exit node is offered it falls back to
 # direct datacenter egress.
+# Boot hardening: the engine logs to boot.log (committed next to
+# live.json on every publish), publishes its link as soon as the
+# tunnel exists (before the restore and the desktop start), and
+# verifies the saved archive before restoring it; a failed
+# verification boots fresh with saving held, so the last good
+# archive in the repo is never overwritten by an empty state.
 
 VNC_PASS="${VNC_PASS:-bjvfi-live}"
 export BROWSER_REPO_DIR="$(pwd)"
@@ -21,6 +27,18 @@ export SAVE_REPO="$HOME/save-repo"
 export PUB_REPO="$HOME/pub-repo"
 TS_STATUS='datacenter direct'
 TS_PEERS=''
+
+# Boot log: everything the engine prints from here on also lands
+# in boot.log, and the publish loop commits that file next to
+# live.json, so a failed boot can be read from the repo instead
+# of being locked inside the Actions log.
+BOOT_LOG="$HOME/boot.log"
+: > "$BOOT_LOG"
+exec > >(tee -a "$BOOT_LOG") 2>&1
+bootstep() { echo "[boot $(date -u +%H:%M:%SZ)] $*"; }
+bootstep 'engine started'
+RESTORE_STATE='none'
+SAVE_ENABLED=1
 
 sudo apt-get update -qq
 sudo apt-get install -y -qq xvfb x11vnc novnc websockify plasma-desktop dolphin konsole systemsettings xdg-desktop-portal-kde kate dbus-x11 imagemagick rsync fonts-liberation fonts-noto-core gvfs qdbus-qt5 > /dev/null 2>&1 || sudo apt-get install -y -qq xvfb x11vnc novnc websockify plasma-desktop dolphin konsole systemsettings kate dbus-x11 imagemagick rsync fonts-liberation fonts-noto-core gvfs > /dev/null 2>&1 || sudo apt-get install -y -qq xvfb x11vnc novnc websockify plasma-desktop konsole systemsettings dbus-x11 imagemagick rsync fonts-liberation fonts-noto-core gvfs > /dev/null
@@ -33,6 +51,7 @@ if ! command -v google-chrome > /dev/null; then
 fi
 curl -sL -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
 chmod +x /tmp/cloudflared
+bootstep 'packages ready'
 
 # Home IP routing: when TS_AUTHKEY is set, this session joins the
 # tailnet and sends its traffic out through the home exit node, so
@@ -98,6 +117,7 @@ print(', '.join(out) if out else 'none')
 " 2>/dev/null)
 fi
 
+bootstep "routing settled: $TS_STATUS"
 git config user.name 'browser-bot'
 git config user.email 'browser-bot@users.noreply.github.com'
 
@@ -138,6 +158,10 @@ fi
 if [ -z "$PROFILE_KEY" ]; then
   echo 'Saving is not switched on'
   exit 2
+fi
+if [ -f "$HOME/.save-hold" ]; then
+  echo 'Saving is held this session: the last good save stays untouched'
+  exit 4
 fi
 SAVE_REPO="${SAVE_REPO:-$HOME/save-repo}"
 if [ ! -d "$SAVE_REPO/.git" ]; then
@@ -716,6 +740,105 @@ if __name__ == '__main__':
         ThreadingHTTPServer(('127.0.0.1', 8090), Handler).serve_forever()
 STORE_EOF
 
+# Until the restore runs (it sits later in the boot, with the
+# desktop), live.json reports the restore as pending when a
+# saved archive is waiting.
+if [ -n "$PROFILE_KEY" ] && [ -f profile.tar.gz.enc ]; then
+  RESTORE_STATE='pending'
+fi
+
+# Quick tunnel, a fresh random address each run. The tunnel now
+# starts BEFORE the state restore and the desktop, and the first
+# publish happens as soon as its address exists, so live.json
+# goes fresh early and a later failure still leaves a live link
+# and a diagnosable state in the repo. Quick tunnels do fail to
+# register now and then; the attempt is retried before the boot
+# gives up, and giving up still publishes (with the boot log)
+# before it exits.
+export CHAIN_FILE="$HOME/chain-result.txt"
+URL=''
+for attempt in 1 2 3; do
+  bootstep "tunnel attempt $attempt"
+  /tmp/cloudflared tunnel --url http://localhost:6080 --no-autoupdate --protocol http2 > /tmp/tunnel.log 2>&1 &
+  TUNNEL_PID=$!
+  for i in $(seq 1 22); do
+    URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1)
+    if [ -n "$URL" ]; then break; fi
+    sleep 2
+  done
+  if [ -n "$URL" ]; then break; fi
+  echo "Tunnel attempt $attempt produced no address"
+  cat /tmp/tunnel.log
+  kill $TUNNEL_PID > /dev/null 2>&1 || true
+  sleep 5
+done
+if [ -z "$URL" ]; then
+  echo 'Tunnel did not come up after 3 attempts'
+  TUNNEL_FAILED=1
+else
+  echo "Tunnel is live: $URL"
+fi
+
+# Publishing writes live.json in the publish loop's own clone.
+publish() {
+  (
+    flock -x 200
+    cd "$PUB_REPO" 2>/dev/null || exit 0
+    git fetch -q origin main 2>/dev/null || true
+    git reset --hard -q origin/main 2>/dev/null || true
+    cp "$BOOT_LOG" boot.log 2>/dev/null || true
+    TUNNEL_URL="$URL" VNC_PASS="$VNC_PASS" TS_STATUS="$TS_STATUS" TS_PEERS="$TS_PEERS" CHAIN_FILE="$CHAIN_FILE" RESTORE_STATE="$RESTORE_STATE" python3 -c "
+import json, os, datetime
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+base = os.environ.get('TUNNEL_URL', '')
+url = base + '/vnc.html?autoconnect=true&password=' + os.environ['VNC_PASS'] + '&resize=scale' if base else ''
+try:
+    d = json.load(open('live.json'))
+except Exception:
+    d = {}
+d['url'] = url
+if not d.get('started'):
+    d['started'] = now
+d['heartbeat'] = now
+d['state'] = 'live' if url else 'tunnel-failed'
+d['build'] = 'full-computer'
+d['restore'] = os.environ.get('RESTORE_STATE', '')
+d['ts'] = os.environ.get('TS_STATUS', '')
+d['peers'] = os.environ.get('TS_PEERS', '')
+try:
+    with open(os.environ['CHAIN_FILE']) as f:
+        d['chain'] = f.read().strip()
+except Exception:
+    d['chain'] = 'pending: self-dispatch fires at 300 minutes'
+try:
+    import urllib.request
+    d['ip'] = urllib.request.urlopen('https://api.ipify.org', timeout=5).read().decode().strip()
+except Exception:
+    pass
+json.dump(d, open('live.json', 'w'), indent=2)
+"
+    git add live.json boot.log
+    git commit -m 'browser live' > /dev/null 2>&1 || true
+    git push -q origin main > /dev/null 2>&1 || true
+  ) 200>/tmp/publish.lock
+}
+
+save_profile() {
+  if [ "$SAVE_ENABLED" != "1" ]; then
+    echo 'Final save held: protecting the last good archive'
+    return 0
+  fi
+  bash $HOME/do-save.sh || true
+}
+
+publish
+bootstep 'first publish done'
+if [ -n "${TUNNEL_FAILED:-}" ]; then
+  echo 'Boot cannot continue without a tunnel address; the failure state and boot log are published above'
+  exit 1
+fi
+
+
 sudo timedatectl set-timezone America/New_York > /dev/null 2>&1 || true
 export TZ=America/New_York
 Xvfb :99 -screen 0 1280x800x24 > /tmp/xvfb.log 2>&1 &
@@ -732,26 +855,54 @@ mkdir -p $HOME/Desktop $HOME/.local/share/applications $HOME/.local/share/icons 
 # build carry over.
 RESTORED=0
 if [ -n "$PROFILE_KEY" ] && [ -f profile.tar.gz.enc ]; then
-  rm -rf /tmp/restore && mkdir -p /tmp/restore
-  if openssl enc -d -aes-256-cbc -pbkdf2 -pass env:PROFILE_KEY -in profile.tar.gz.enc 2>/dev/null | tar -xzf - -C /tmp/restore 2>/dev/null; then
-    if [ -d /tmp/restore/profile ]; then
-      rsync -a /tmp/restore/profile/ $HOME/chrome-profile/ 2>/dev/null
-      [ -d /tmp/restore/state/Desktop ] && rsync -a /tmp/restore/state/Desktop/ $HOME/Desktop/ 2>/dev/null
-      [ -d /tmp/restore/state/applications ] && rsync -a /tmp/restore/state/applications/ $HOME/.local/share/applications/ 2>/dev/null
-      [ -d /tmp/restore/state/icons ] && rsync -a /tmp/restore/state/icons/ $HOME/.local/share/icons/ 2>/dev/null
-      [ -d /tmp/restore/state/config ] && rsync -a /tmp/restore/state/config/ $HOME/.config/ 2>/dev/null
-      [ -d /tmp/restore/state/Work ] && rsync -a /tmp/restore/state/Work/ $HOME/Work/ 2>/dev/null
-      [ -d /tmp/restore/state/store ] && rsync -a /tmp/restore/state/store/ $HOME/.store/ 2>/dev/null
-    else
-      rsync -a /tmp/restore/ $HOME/chrome-profile/ 2>/dev/null
+  bootstep 'restore: verifying the saved archive before touching the live home'
+  RESTORE_VERIFIED=0
+  for try in 1 2; do
+    rm -rf /tmp/restore /tmp/restore.tar /tmp/archive.enc
+    cp profile.tar.gz.enc /tmp/archive.enc 2>/dev/null || true
+    if [ -f /tmp/archive.enc ] \
+       && openssl enc -d -aes-256-cbc -pbkdf2 -pass env:PROFILE_KEY -in /tmp/archive.enc -out /tmp/restore.tar 2>/tmp/decrypt.log \
+       && tar -tzf /tmp/restore.tar > /dev/null 2>&1; then
+      RESTORE_VERIFIED=1
+      break
     fi
-    rm -f $HOME/chrome-profile/SingletonLock $HOME/chrome-profile/SingletonCookie $HOME/chrome-profile/SingletonSocket
-    RESTORED=1
-    echo 'Saved profile and desktop restored'
+    echo "Restore verification failed (attempt $try)"
+    cat /tmp/decrypt.log 2>/dev/null || true
+    sleep 3
+  done
+  if [ "$RESTORE_VERIFIED" = "1" ]; then
+    mkdir -p /tmp/restore
+    if tar -xzf /tmp/restore.tar -C /tmp/restore 2>/dev/null; then
+      if [ -d /tmp/restore/profile ]; then
+        rsync -a /tmp/restore/profile/ $HOME/chrome-profile/ 2>/dev/null
+        [ -d /tmp/restore/state/Desktop ] && rsync -a /tmp/restore/state/Desktop/ $HOME/Desktop/ 2>/dev/null
+        [ -d /tmp/restore/state/applications ] && rsync -a /tmp/restore/state/applications/ $HOME/.local/share/applications/ 2>/dev/null
+        [ -d /tmp/restore/state/icons ] && rsync -a /tmp/restore/state/icons/ $HOME/.local/share/icons/ 2>/dev/null
+        [ -d /tmp/restore/state/config ] && rsync -a /tmp/restore/state/config/ $HOME/.config/ 2>/dev/null
+        [ -d /tmp/restore/state/Work ] && rsync -a /tmp/restore/state/Work/ $HOME/Work/ 2>/dev/null
+        [ -d /tmp/restore/state/store ] && rsync -a /tmp/restore/state/store/ $HOME/.store/ 2>/dev/null
+      else
+        rsync -a /tmp/restore/ $HOME/chrome-profile/ 2>/dev/null
+      fi
+      rm -f $HOME/chrome-profile/SingletonLock $HOME/chrome-profile/SingletonCookie $HOME/chrome-profile/SingletonSocket
+      RESTORED=1
+      RESTORE_STATE='ok'
+      echo 'Saved profile and desktop restored'
+    else
+      echo 'Verified archive could not be extracted, starting fresh with saving held'
+      RESTORE_STATE='failed-fresh-boot'
+    fi
   else
-    echo 'Saved profile could not be opened, starting fresh'
+    echo 'Saved profile could not be verified, starting fresh with saving held'
+    RESTORE_STATE='failed-fresh-boot'
   fi
+  if [ "$RESTORE_STATE" = "failed-fresh-boot" ]; then
+    SAVE_ENABLED=0
+    : > $HOME/.save-hold
+  fi
+  rm -rf /tmp/restore /tmp/restore.tar /tmp/archive.enc
 fi
+publish
 
 # Wallpaper: a calm warm tan gradient, generated on the spot.
 if [ ! -f $HOME/wallpaper.png ]; then
@@ -850,6 +1001,7 @@ done
 export LIBGL_ALWAYS_SOFTWARE=1
 startplasma-x11 > /tmp/plasma.log 2>&1 &
 sleep 5
+bootstep 'desktop started'
 
 # Wallpaper, applied through Plasma's own scripting channel once
 # the shell answers. Writing the desktop containment's config by
@@ -885,70 +1037,16 @@ python3 $HOME/store-helper.py > /tmp/store-helper.log 2>&1 &
 DISPLAY=:99 google-chrome --no-sandbox --disable-dev-shm-usage --no-first-run --start-maximized --lang=en-US --force-webrtc-ip-handling-policy=disable_non_proxied_udp --disable-blink-features=AutomationControlled --user-data-dir=$HOME/chrome-profile https://duckduckgo.com http://127.0.0.1:8080/ > /tmp/chrome.log 2>&1 &
 
 # Continuous save: every minute, so nothing done in this session is lost.
-( while true; do sleep 60; bash $HOME/do-save.sh > /dev/null 2>&1 || true; done ) > /dev/null 2>&1 &
-
-# Quick tunnel, a fresh random address each run.
-export CHAIN_FILE="$HOME/chain-result.txt"
-/tmp/cloudflared tunnel --url http://localhost:6080 --no-autoupdate --protocol http2 > /tmp/tunnel.log 2>&1 &
-URL=''
-for i in $(seq 1 30); do
-  URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1)
-  if [ -n "$URL" ]; then break; fi
-  sleep 2
-done
-if [ -z "$URL" ]; then
-  echo 'Tunnel did not come up'
-  cat /tmp/tunnel.log
-  exit 1
+# When the restore failed verification, saving is held for the
+# whole session: this loop never starts, the final save is
+# skipped, and do-save.sh itself refuses while the hold flag
+# exists, so the last good archive in the repo survives.
+if [ "$SAVE_ENABLED" = "1" ]; then
+  ( while true; do sleep 60; bash $HOME/do-save.sh > /dev/null 2>&1 || true; done ) > /dev/null 2>&1 &
+else
+  echo 'Auto-save held this session: the saved archive could not be verified at boot'
 fi
-echo "Tunnel is live: $URL"
 
-# Publishing writes live.json in the publish loop's own clone.
-publish() {
-  (
-    flock -x 200
-    cd "$PUB_REPO" 2>/dev/null || exit 0
-    git fetch -q origin main 2>/dev/null || true
-    git reset --hard -q origin/main 2>/dev/null || true
-    TUNNEL_URL="$URL" VNC_PASS="$VNC_PASS" TS_STATUS="$TS_STATUS" TS_PEERS="$TS_PEERS" CHAIN_FILE="$CHAIN_FILE" python3 -c "
-import json, os, datetime
-now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-url = os.environ['TUNNEL_URL'] + '/vnc.html?autoconnect=true&password=' + os.environ['VNC_PASS'] + '&resize=scale'
-try:
-    d = json.load(open('live.json'))
-except Exception:
-    d = {}
-d['url'] = url
-if not d.get('started'):
-    d['started'] = now
-d['heartbeat'] = now
-d['state'] = 'live'
-d['build'] = 'full-computer'
-d['ts'] = os.environ.get('TS_STATUS', '')
-d['peers'] = os.environ.get('TS_PEERS', '')
-try:
-    with open(os.environ['CHAIN_FILE']) as f:
-        d['chain'] = f.read().strip()
-except Exception:
-    d['chain'] = 'pending: self-dispatch fires at 300 minutes'
-try:
-    import urllib.request
-    d['ip'] = urllib.request.urlopen('https://api.ipify.org', timeout=5).read().decode().strip()
-except Exception:
-    pass
-json.dump(d, open('live.json', 'w'), indent=2)
-"
-    git add live.json
-    git commit -m 'browser live' > /dev/null 2>&1 || true
-    git push -q origin main > /dev/null 2>&1 || true
-  ) 200>/tmp/publish.lock
-}
-
-save_profile() {
-  bash $HOME/do-save.sh || true
-}
-
-publish
 
 # Always on: at 300 minutes this run calls the next run into being,
 # so a fresh session takes over before this one ends. The dispatch
