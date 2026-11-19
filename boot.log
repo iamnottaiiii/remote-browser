@@ -8,3 +8,5 @@ Tunnel is live: https://lawsuit-mba-goal-tries.trycloudflare.com
 [boot 15:01:43Z] first publish done
 [boot 15:01:46Z] restore: verifying the saved archive before touching the live home
 Saved profile and desktop restored
+[boot 15:01:56Z] desktop started
+PORT=5900
