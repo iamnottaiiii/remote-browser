@@ -1,0 +1,7 @@
+[boot 14:55:44Z] engine started
+[boot 15:01:14Z] packages ready
+Joined the tailnet, looking for an exit node
+Home IP routing on, exit node 100.83.1.97
+[boot 15:01:25Z] routing settled: exit node 100.83.1.97
+[boot 15:01:34Z] tunnel attempt 1
+Tunnel is live: https://lawsuit-mba-goal-tries.trycloudflare.com

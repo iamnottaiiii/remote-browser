@@ -1,11 +1,12 @@
 {
-  "heartbeat": "2026-11-18T23:47:03.296315+00:00",
+  "heartbeat": "2026-11-19T15:01:41.874314+00:00",
   "started": "2026-11-18T06:32:46.348519+00:00",
-  "url": "https://reads-rendered-practitioners-tracking.trycloudflare.com/vnc.html?autoconnect=true&password=bjvfi-live&resize=scale",
+  "url": "https://lawsuit-mba-goal-tries.trycloudflare.com/vnc.html?autoconnect=true&password=bjvfi-live&resize=scale",
   "state": "live",
   "ip": "96.73.246.169",
   "ts": "exit node 100.83.1.97",
-  "peers": "bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser, DESKTOP-4N2854P (exit offered), bjvfi-browser, bjvfi-browser, HPlaptop (exit offered), bjvfi-browser, bjvfi-browser, bjvfi-browser",
+  "peers": "bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser, DESKTOP-4N2854P (exit offered), bjvfi-browser, bjvfi-browser, HPlaptop (exit offered), bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser, bjvfi-browser",
   "build": "full-computer",
-  "chain": "dispatch to iamnottaiiii/remote-browser at 2026-11-18T23:21:01Z UTC, HTTP 403"
+  "chain": "pending: self-dispatch fires at 300 minutes",
+  "restore": "pending"
 }
